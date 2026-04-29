@@ -3,7 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/firestore_service.dart';
-import '../../models/user_model.dart';
+import '../../core/services/isar_service.dart';
+import '../../models/isar/isar_message.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   final String matchUserId;
@@ -21,6 +22,18 @@ class ChatPage extends ConsumerStatefulWidget {
 
 class _ChatPageState extends ConsumerState<ChatPage> {
   final TextEditingController _msgCtrl = TextEditingController();
+  late String _chatRoomId = '';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final currentUserId = ref.read(authServiceProvider).currentUser?.uid ?? '';
+      _chatRoomId = ref.read(firestoreServiceProvider).getChatRoomId(currentUserId, widget.matchUserId);
+      ref.read(isarServiceProvider).hydrateChatRoom(_chatRoomId);
+      setState(() {});
+    });
+  }
 
   void _sendMessage() {
     if (_msgCtrl.text.trim().isEmpty) return;
@@ -28,15 +41,19 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final currentUser = ref.read(authServiceProvider).currentUser;
     if (currentUser == null) return;
 
-    // We reuse the sendMessage method which acts as our chat delivery
-    // Note: A robust chat app would have a dedicated 'messages' subcollection 
-    // inside the 'matches' document, but using notifications of type 'message' 
-    // works perfectly for this MVP.
+    // Save locally to Isar first (Offline-first approach)
+    ref.read(isarServiceProvider).saveLocalMessage(
+      _chatRoomId,
+      currentUser.uid,
+      _msgCtrl.text.trim(),
+    );
+    
+    // We also trigger the old push notification logic if needed
     ref.read(firestoreServiceProvider).sendMessage(
       currentUser.uid,
       widget.matchUserId,
       _msgCtrl.text.trim(),
-      'Current User', // This isn't ideal but we can rely on the senderName being stored
+      'Current User',
     );
 
     _msgCtrl.clear();
@@ -54,55 +71,62 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       body: Column(
         children: [
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('chats')
-                  .doc(ref.read(firestoreServiceProvider).getChatRoomId(currentUserId, widget.matchUserId))
-                  .collection('messages')
-                  .orderBy('createdAt', descending: true)
-                  .snapshots(),
+            child: _chatRoomId.isEmpty 
+              ? const Center(child: CircularProgressIndicator())
+              : StreamBuilder<List<IsarMessage>>(
+              stream: ref.watch(isarServiceProvider).watchMessages(_chatRoomId),
               builder: (context, snapshot) {
                 if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
                 
-                final messages = snapshot.data!.docs;
+                final messages = snapshot.data!;
 
                 return ListView.builder(
                   reverse: true,
                   padding: const EdgeInsets.all(16),
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
-                    final data = messages[index].data() as Map<String, dynamic>;
-                    final isMe = data['senderId'] == currentUserId;
+                    final msg = messages[index];
+                    final isMe = msg.senderId == currentUserId;
 
                     return Align(
                       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Container(
-                        margin: EdgeInsets.only(
-                          bottom: 8,
-                          right: isMe ? 0 : 40,
-                          left: isMe ? 40 : 0,
-                        ),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          gradient: isMe 
-                            ? const LinearGradient(
-                                colors: [Colors.pinkAccent, Colors.purpleAccent],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              )
-                            : null,
-                          color: isMe ? null : Colors.grey[800],
-                          borderRadius: BorderRadius.only(
-                            topLeft: const Radius.circular(16),
-                            topRight: const Radius.circular(16),
-                            bottomLeft: Radius.circular(isMe ? 16 : 0),
-                            bottomRight: Radius.circular(isMe ? 0 : 16),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isMe && !msg.isSynced)
+                            const Padding(
+                              padding: EdgeInsets.only(right: 8.0),
+                              child: Icon(Icons.access_time, size: 12, color: Colors.grey),
+                            ),
+                          Container(
+                            margin: EdgeInsets.only(
+                              bottom: 8,
+                              right: isMe ? 0 : 40,
+                              left: isMe ? 40 : 0,
+                            ),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              gradient: isMe 
+                                ? const LinearGradient(
+                                    colors: [Colors.pinkAccent, Colors.purpleAccent],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  )
+                                : null,
+                              color: isMe ? null : Colors.grey[800],
+                              borderRadius: BorderRadius.only(
+                                topLeft: const Radius.circular(16),
+                                topRight: const Radius.circular(16),
+                                bottomLeft: Radius.circular(isMe ? 16 : 0),
+                                bottomRight: Radius.circular(isMe ? 0 : 16),
+                              ),
+                            ),
+                            child: Text(
+                              msg.text,
+                              style: const TextStyle(color: Colors.white, fontSize: 16),
+                            ),
                           ),
-                        ),
-                        child: Text(
-                          data['message'] ?? '',
-                          style: const TextStyle(color: Colors.white, fontSize: 16),
-                        ),
+                        ],
                       ),
                     );
                   },

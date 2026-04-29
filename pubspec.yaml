@@ -48,10 +48,16 @@ dependencies:
   cloud_firestore: any
   firebase_storage: any
   firebase_messaging: any
+  isar: any
+  isar_flutter_libs: any
+  path_provider: any
+  connectivity_plus: any
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  build_runner: any
+  isar_generator: any
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

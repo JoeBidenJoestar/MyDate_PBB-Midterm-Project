@@ -4,6 +4,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'core/theme/app_theme.dart';
 import 'routes/app_routes.dart';
+import 'core/services/isar_service.dart';
+import 'core/widgets/connectivity_banner.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,8 +14,13 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
   
+  // Pre-warm Isar Service to ensure it opens before UI needs it
+  final container = ProviderContainer();
+  await container.read(isarServiceProvider).db;
+  
   runApp(
-    const ProviderScope(
+    UncontrolledProviderScope(
+      container: container,
       child: MyDateApp(),
     ),
   );
@@ -31,6 +38,9 @@ class MyDateApp extends StatelessWidget {
       themeMode: ThemeMode.dark, // Forced Dark Mode
       routerConfig: appRouter,
       debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        return ConnectivityBanner(child: child!);
+      },
     );
   }
 }
